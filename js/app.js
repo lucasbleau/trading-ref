@@ -37,7 +37,7 @@ function openModal(item) {
     <div class="modal-body">
       <div class="modal-chart">${getSchema(item.schema)}</div>
       <div class="modal-content">
-        <div class="modal-section">
+        <div class="modal-section full">
           <div class="modal-section-head">Principe</div>
           <p>${d.principe}</p>
         </div>
