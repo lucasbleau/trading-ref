@@ -41,14 +41,6 @@ function openModal(item) {
           <div class="modal-section-head">Principe</div>
           <p>${d.principe}</p>
         </div>
-        <div class="modal-section">
-          <div class="modal-section-head amber">Formule</div>
-          <div class="formula-box">${escHtml(d.formule)}</div>
-        </div>
-        <div class="modal-section full">
-          <div class="modal-section-head bull">Calcul étape par étape</div>
-          <ol>${calcSteps}</ol>
-        </div>
         <div class="modal-section full">
           <div class="modal-section-head">Signaux &amp; Utilisation</div>
           <ul>${signaux}</ul>
