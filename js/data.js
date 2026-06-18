@@ -1,3 +1,245 @@
+const VOLUME = [
+  {
+    id:'vol_base', num:1, title:'Histogramme de Volume', tag:'BASE', kind:'neutral', schema:'vol_base',
+    principe:['Barres verticales sous le graphique de prix','Vert = clôture haussière · Rouge = clôture baissière'],
+    usage:'Voir où le marché a réellement échangé. Un mouvement sans volume est suspect et peut être inversé facilement.',
+    detail:{
+      principe:'L\'histogramme de volume est la représentation brute des échanges par bougie. Chaque barre mesure le nombre de contrats échangés pendant la période. Un mouvement avec fort volume a plus de chance de persister. Sans volume, le marché peut facilement revenir en arrière.',
+      signaux:['Volume fort + hausse des prix → tendance saine, continuation probable','Volume fort + baisse des prix → distribution ou panique, continuation probable','Volume faible + hausse → manque de conviction haussière, risque de retournement','Volume faible + baisse → manque de conviction baissière, possible rebond','Pic de volume isolé → événement significatif (news, liquidation), zone à surveiller'],
+      parametres:[{p:'Bougie standard',d:'1 barre = 1 période de temps'},{p:'Colorisation',d:'Vert/Rouge selon la direction de la bougie'},{p:'Cumulatif (VP)',d:'Volume par niveau de prix — plus d\'informations'}],
+      erreurs:['Ignorer le volume complètement — il confirme ou invalide chaque signal','Comparer le volume absolu entre marchés différents — utiliser le RVOL','Oublier les effets de fin de séance ou de week-end qui biaisent le volume'],
+      pine:`//@version=5
+indicator("Volume", overlay=false)
+col = close >= open ? color.green : color.red
+plot(volume, "Volume", col, style=plot.style_histogram)
+plot(ta.sma(volume, 20), "Vol Moy 20", color.orange, 1)`
+    }
+  },
+  {
+    id:'rvol', num:2, title:'Volume Relatif (RVOL)', tag:'FORCE', kind:'bull', schema:'rvol',
+    principe:['RVOL = Volume actuel / Volume moyen (20 périodes)','RVOL > 1,5 = volume inhabituellement fort · RVOL < 0,5 = anémique'],
+    usage:'Mesure si le volume est anormalement élevé. RVOL > 1,5 au déclenchement d\'un signal renforce sa fiabilité.',
+    detail:{
+      principe:'Le RVOL (Relative Volume) compare le volume actuel au volume moyen historique. Un RVOL de 2,0 signifie que le marché échange deux fois plus que d\'habitude. C\'est cette anomalie qui est significative. Le RVOL permet de comparer différents actifs et différentes heures de la journée.',
+      signaux:['RVOL > 1,5 à la cassure d\'un niveau → signal fiable','RVOL < 0,8 à la cassure → méfiance, possible fausse cassure','Spike RVOL isolé sans cassure → possible manipulation ou news','RVOL fort sur bougie de rejet (mèche longue) → signal de retournement puissant'],
+      parametres:[{p:'Période 20',d:'Standard — s\'adapte aux 20 dernières périodes'},{p:'Seuils',d:'1.5 = notable · 2.0 = fort · 3.0+ = exceptionnel'},{p:'Intraday',d:'Normaliser par l\'heure de la journée pour plus de précision'}],
+      erreurs:['Utiliser le RVOL seul sans signal de prix — le volume fort peut aller dans les deux sens','Comparer le RVOL pré-market avec le RVOL intrasession — les horaires biaisent la moyenne'],
+      pine:`//@version=5
+indicator("RVOL", overlay=false)
+vol_avg = ta.sma(volume, 20)
+rvol    = volume / vol_avg
+col = rvol > 1.5 ? color.orange : close >= open ? color.green : color.red
+plot(rvol, "RVOL", col, style=plot.style_histogram)
+hline(1.5, "Seuil fort", color.orange, linestyle=hline.style_dashed)
+hline(1.0, "Neutre",     color.gray,   linestyle=hline.style_dotted)`
+    }
+  },
+  {
+    id:'vol_tend', num:3, title:'Volume + Tendance (4 Cas)', tag:'CONFIRMATION', kind:'neutral', schema:'vol_tend',
+    principe:['Hausse + vol fort = tendance saine · Hausse + vol faible = rebond fragile','Baisse + vol fort = downtrend solide · Baisse + vol faible = repli dans un uptrend'],
+    usage:'La combinaison prix + volume donne la conviction. Volume croissant dans le sens de la tendance = continuation.',
+    detail:{
+      principe:'Il existe quatre combinaisons prix/volume à mémoriser. Elles donnent la conviction derrière chaque mouvement et aident à anticiper les retournements par perte de volume dans le sens de la tendance.',
+      signaux:['Hausse + volume fort → uptrend sain, acheteurs convaincus → rester long','Hausse + volume faible → rebond technique sans conviction → stop rapproché','Baisse + volume fort → downtrend sain ou capitulation → rester short','Baisse + volume faible → repli sain dans un uptrend → zone d\'achat possible'],
+      parametres:[{p:'Volume fort',d:'RVOL > 1,3 par rapport à la moyenne'},{p:'Volume faible',d:'RVOL < 0,7 — peu d\'intérêt du marché'},{p:'Confirmation',d:'Observer la tendance du volume sur 3-5 bougies, pas une seule'}],
+      erreurs:['Réagir sur une seule bougie — observer la tendance du volume sur 3-5 bougies','Ignorer le contexte macro : volume faible un jour férié ne signifie rien'],
+      pine:`//@version=5
+indicator("Volume Tendance", overlay=false)
+avg  = ta.sma(volume, 20)
+up_s = close > close[1] and volume > avg * 1.3
+up_w = close > close[1] and volume < avg * 0.7
+dn_s = close < close[1] and volume > avg * 1.3
+dn_w = close < close[1] and volume < avg * 0.7
+col  = up_s ? color.green : up_w ? color.new(color.green,60) : dn_s ? color.red : dn_w ? color.new(color.red,60) : color.gray
+plot(volume, "Vol", col, style=plot.style_histogram)`
+    }
+  },
+  {
+    id:'vpvr', num:4, title:'Volume Profile (VPVR)', tag:'STRUCTURE', kind:'neutral', schema:'vpvr',
+    principe:['Distribution du volume par niveau de prix (et non par temps)','Barres horizontales : courtes = peu échangé · longues = très échangé'],
+    usage:'Révèle les zones d\'intérêt institutionnel. POC = aimant principal. VAH/VAL = bornes de la Value Area (70% des échanges).',
+    detail:{
+      principe:'Le Volume Profile (VPVR = Volume Profile Visible Range) représente la distribution du volume non plus dans le temps, mais par niveau de prix. Chaque barre horizontale montre combien de volume a été échangé à ce niveau. Il révèle où les institutions ont réellement acheté et vendu.',
+      signaux:['POC → niveau le plus échangé, aimant et support/résistance fort','Value Area (70% du volume) → zone de consensus ; retour dans la VA = probable','Prix hors de la VA → excès qui tend à revenir dans la VA','Profil en D (cloche) → équilibre · Profil P → distribution · Profil b → accumulation'],
+      parametres:[{p:'Visible Range',d:'Calcul sur toute la plage visible — s\'adapte au zoom'},{p:'Session Range',d:'Une session = une distribution'},{p:'N buckets',d:'18-24 tranches pour un profil lisible'}],
+      erreurs:['Utiliser avec peu de données → profil non représentatif (minimum 20-30 bougies)','Confondre VPVR (range entier automatique) et FRVP (plage fixe manuelle)'],
+      pine:`// Volume Profile disponible nativement dans TradingView
+// Indicateurs → Volume Profile → Visible Range
+// Ou : Indicateurs → Volume Profile → Session`
+    }
+  },
+  {
+    id:'poc', num:5, title:'Point of Control (POC)', tag:'RÉFÉRENCE', kind:'neutral', schema:'poc',
+    principe:['Niveau de prix ayant concentré le plus grand volume','Fort aimant pour le prix — tendance naturelle à y revenir'],
+    usage:'Cible prioritaire lors d\'un retour. Support si le prix est au-dessus, résistance si en dessous.',
+    detail:{
+      principe:'Le POC (Point of Control) est le niveau de prix où le plus grand volume a été échangé. C\'est le centre de gravité du marché — le prix tend naturellement à y revenir, car c\'est là que les deux parties se sont accordés sur la valeur.',
+      signaux:['Prix au-dessus du POC → le POC est un support potentiel','Prix en dessous du POC → le POC est une résistance potentielle','Retour sur le POC + rejet → point d\'entrée dans la direction du biais','POC aligné avec un OB ou FVG → confluence forte'],
+      parametres:[{p:'POC journalier',d:'Référence intraday majeure'},{p:'POC hebdomadaire',d:'Référence swing trading'},{p:'POC de range',d:'FRVP posé sur une zone d\'intérêt spécifique'}],
+      erreurs:['Trader le POC isolément sans biais directionnel','Ignorer que le POC peut migrer avec de nouveaux échanges'],
+      pine:`// POC = ligne rouge horizontale sur le Volume Profile TradingView
+// Créer une alerte sur le niveau du POC du jour précédent`
+    }
+  },
+  {
+    id:'va', num:6, title:'Value Area (VAH / VAL)', tag:'ZONE', kind:'blue', schema:'va',
+    principe:['Zone concentrant 70% du volume total (convention standard ICT/Market Profile)','VAH = borne haute · VAL = borne basse'],
+    usage:'Le prix revient souvent dans la VA après s\'en être écarté. VAH et VAL = zones de retournement fréquentes.',
+    detail:{
+      principe:'La Value Area est la zone de prix contenant 70% du volume total échangé. C\'est la "juste valeur" perçue par le marché. Au-dessus du VAH ou en dessous du VAL, le prix est en excès et tend à revenir dans la VA. Convention issue du Market Profile (Peter Steidlmayer).',
+      signaux:['Prix retourne dans la VA depuis au-dessus → tendance à continuer vers le POC puis VAL','Prix retourne dans la VA depuis en dessous → tendance vers POC puis VAH','Prix reste hors de la VA toute la session → fort momentum dans cette direction','VAH/VAL = S/R dynamiques intraday pour les retournements'],
+      parametres:[{p:'70% standard',d:'Convention Market Profile / ICT'},{p:'Session Daily',d:'VP journalier — se remet à zéro chaque jour'},{p:'VWAP ± σ',d:'Alternative approximative à la Value Area'}],
+      erreurs:['Attendre systématiquement un retour dans la VA — en trend fort, le prix ne revient pas','Confondre VAH/VAL avec les Bandes de Bollinger — calcul totalement différent'],
+      pine:`// VAH et VAL : lignes bleues pointillées du Volume Profile TradingView
+// Configurer l'affichage dans les paramètres du Volume Profile`
+    }
+  },
+  {
+    id:'hvn', num:7, title:'High Volume Node (HVN)', tag:'SUPPORT/RÉSISTANCE', kind:'bull', schema:'hvn',
+    principe:['Niveau de prix avec un volume concentré exceptionnellement élevé','Le prix y ralentit ou s\'arrête — forte zone institutionnelle'],
+    usage:'Le HVN attire le prix et le ralentit. Excellent niveau pour un objectif partiel ou pour attendre une réaction.',
+    detail:{
+      principe:'Un HVN est un pic de volume dans le profil — un niveau de prix où beaucoup d\'échanges ont eu lieu. Le HVN crée une forte zone d\'intérêt : le prix a du mal à le traverser sans consolider. C\'est un niveau de support ou résistance chargé de volume institutionnel.',
+      signaux:['Prix approche un HVN depuis le bas → résistance probable','Prix approche un HVN depuis le haut → support probable','Retour sur HVN après cassure → zone de pull-back idéale','HVN coïncidant avec un OB → confluence forte, zone très solide'],
+      parametres:[{p:'Définition visuelle',d:'Barre significativement plus longue que ses voisines'},{p:'Relativité',d:'Comparer les barres entre elles — pas de seuil absolu'},{p:'Importance',d:'HVN journalier > HVN horaire'}],
+      erreurs:['Confondre HVN et POC — le POC est le HVN absolu, mais il peut y en avoir plusieurs','Penser que le HVN bloque toujours — un déplacement fort peut le traverser'],
+      pine:`// HVN : barre longue dans le Volume Profile
+// Placer un niveau horizontal sur le HVN pour les alertes`
+    }
+  },
+  {
+    id:'lvn', num:8, title:'Low Volume Node (LVN)', tag:'PASSAGE RAPIDE', kind:'amber', schema:'lvn',
+    principe:['Niveau de prix avec très peu de volume échangé','Le prix traverse ces zones rapidement — peu de résistance des deux côtés'],
+    usage:'Le LVN est un couloir vide : le prix accélère en le traversant. Anticiper la vitesse du mouvement.',
+    detail:{
+      principe:'Un LVN est une zone du profil avec très peu de barres horizontales. Le marché y a passé peu de temps, donc il y a peu d\'intérêt des deux côtés. Le prix traverse généralement ces zones rapidement, sans consolider — idéal pour anticiper des mouvements rapides.',
+      signaux:['Prix entre dans un LVN → accélération probable, peu de résistance','LVN entre POC et prix → le prix peut rapidement atteindre le POC','LVN au-dessus d\'un HVN cassé → route libre vers le prochain HVN','LVN dans un OB → l\'OB est plus fragile qu\'il n\'y paraît'],
+      parametres:[{p:'Définition visuelle',d:'Barre courte entourée de barres plus longues'},{p:'Gap de profil',d:'Cas extrême : aucun échange → passage quasi instantané'},{p:'Contexte',d:'LVN entre deux HVN = couloir → objectif clair'}],
+      erreurs:['Placer des stops dans un LVN — le prix peut sauter plusieurs pips d\'un coup','Oublier que la vitesse de traversée dépend du momentum global'],
+      pine:`// LVN : barre courte dans le Volume Profile
+// Identifier les gaps entre HVN pour anticiper les couloirs`
+    }
+  },
+  {
+    id:'frvp_base', num:9, title:'Principe du FRVP', tag:'STRUCTURE', kind:'neutral', schema:'frvp_base',
+    principe:['Fixed Range VP : calculé sur une plage de bougies sélectionnée manuellement','Contrairement au VPVR, il ne change pas avec le zoom'],
+    usage:'Analyser la distribution du volume sur une zone précise : un swing, une consolidation, un range.',
+    detail:{
+      principe:'Le FRVP (Fixed Range Volume Profile) est un Volume Profile calculé sur une plage de bougies que l\'analyste sélectionne manuellement. Il reste figé même quand le prix avance. Idéal pour analyser une structure spécifique (swing, accumulation, range).',
+      signaux:['Sélectionner la plage → voir le POC et la Value Area de cette structure précise','POC du FRVP = niveau de consensus sur cette phase','VA du FRVP = zone de retour probable si le prix en sort','FRVP sur l\'historique récent → identifier les niveaux de référence institutionnels'],
+      parametres:[{p:'Plage manuelle',d:'Sélectionner le début et la fin de la zone à analyser'},{p:'Disponibilité',d:'Disponible dans TradingView (version payante)'},{p:'Overlapping',d:'Plusieurs FRVP peuvent se superposer sur le même graphique'}],
+      erreurs:['Sélectionner une plage trop large → profil peu précis, dilué','Sélectionner trop peu de bougies → non représentatif'],
+      pine:`// FRVP disponible dans TradingView (version payante)
+// Dessin → Volume Profile → Fixed Range
+// Tracer la sélection sur la zone à analyser`
+    }
+  },
+  {
+    id:'frvp_swing', num:10, title:'FRVP sur un Swing', tag:'ANALYSE', kind:'bull', schema:'frvp_swing',
+    principe:['Poser le FRVP sur un swing haussier ou baissier complet','Le POC du swing = niveau de retrace prioritaire'],
+    usage:'Si le prix revient sur ce swing, le POC agit comme aimant. Confluence Fibonacci + POC = zone d\'entrée premium.',
+    detail:{
+      principe:'En posant un FRVP sur un swing entier (du creux au sommet ou inversement), on identifie les niveaux clés de cette impulsion. Le POC du swing est le niveau où le marché a le plus échangé pendant ce mouvement — souvent là que le prix revient lors d\'un retrace.',
+      signaux:['POC du swing = 1er niveau de retrace après le mouvement','Si retrace jusqu\'au POC → zone d\'entrée dans le sens du swing','Si retrace au-delà du POC → signe de faiblesse du swing','VAL (en upswing) → niveau de retrace maximal avant invalidation'],
+      parametres:[{p:'Swing complet',d:'Du point de départ au sommet/creux de l\'impulsion'},{p:'Confluence',d:'POC du swing + Fibonacci 50-61.8% = zone premium'},{p:'FRVP + OB',d:'POC coïncidant avec l\'OB = zone d\'entrée idéale'}],
+      erreurs:['Sélectionner un swing trop petit — pas assez de données pour un profil fiable','Ignorer le contexte HTF — le FRVP swing doit être dans le sens du biais'],
+      pine:`// FRVP sur swing :
+// 1. Identifier le swing (du creux au sommet)
+// 2. Appliquer le FRVP sur cette plage exacte
+// 3. Annoter le POC et la Value Area`
+    }
+  },
+  {
+    id:'frvp_smc', num:11, title:'FRVP sur OB / FVG', tag:'SMC + VOLUME', kind:'vio', schema:'frvp_smc',
+    principe:['Poser un FRVP précisément sur un Order Block ou FVG','Vérifier si la zone est un HVN (solide) ou LVN (fragile)'],
+    usage:'Un OB avec HVN = zone institutionnelle très solide. Un OB avec LVN = risque de traversée rapide sans réaction.',
+    detail:{
+      principe:'En combinant SMC et Volume Profile, on ajoute une dimension supplémentaire. Un OB ou FVG n\'a pas la même valeur selon que beaucoup ou peu de volume a été échangé à ce niveau. Un HVN dans l\'OB = zone très défendue. Un LVN = possible fausse zone.',
+      signaux:['OB + HVN → zone d\'entrée haute probabilité, les institutions défendront ce niveau','OB + LVN → zone fragile, risque de traversée sans réaction','FVG dans un LVN → comblement rapide probable','FVG dans un HVN → résistance au comblement, zone plus durable'],
+      parametres:[{p:'FRVP sur l\'OB',d:'Sélectionner précisément les bougies de l\'Order Block'},{p:'Résolution',d:'Minimum 5-10 bougies dans l\'OB pour un profil valide'},{p:'Confluence',d:'OB + HVN + Fibonacci = setup très haute probabilité'}],
+      erreurs:['Poser le FRVP sur trop peu de bougies — profil non représentatif','Ignorer un LVN dans l\'OB — signal d\'alerte souvent négligé'],
+      pine:`// Workflow SMC + FRVP :
+// 1. Identifier l'OB ou FVG
+// 2. Poser le FRVP sur la zone
+// 3. HVN → OB solide (entrée prioritaire)
+// 4. LVN → OB fragile (prudence accrue)`
+    }
+  },
+  {
+    id:'delta', num:12, title:'Delta de Volume', tag:'DÉSÉQUILIBRE', kind:'neutral', schema:'delta',
+    principe:['Delta = Volume acheteur − Volume vendeur par bougie','Delta cumulé = tendance de la pression acheteur/vendeur'],
+    usage:'Delta positif cumulé en uptrend = hausse saine. Divergence delta/prix = avertissement de retournement.',
+    detail:{
+      principe:'Le Delta de volume mesure la différence entre le volume exécuté à l\'ask (acheteurs agressifs) et à la bid (vendeurs agressifs). Un delta positif indique que les acheteurs ont été plus agressifs. Le delta cumulé révèle la tendance de cette pression sur la session.',
+      signaux:['Delta cumulé monte avec le prix → uptrend sain','Delta cumulé diverge du prix (baisse alors que prix monte) → signe de distribution','Delta cumulé monte alors que prix baisse → absorption/accumulation','Spike de delta négatif sur bougie haussière → manipulation'],
+      parametres:[{p:'Delta brut',d:'Par bougie — volatile, utile pour les entrées précises'},{p:'CVD',d:'Cumulative Volume Delta — tendance sur la session'},{p:'Données',d:'Nécessite des données tick (flux L2) pour être précis'}],
+      erreurs:['Disponible uniquement avec données tick — approximation seulement avec OHLCV','Approximation : si clôture > ouverture → volume haussier (très grossier)'],
+      pine:`//@version=5
+indicator("Delta approx.", overlay=false)
+bull_vol = close >= open ? volume : 0.0
+bear_vol = close <  open ? volume : 0.0
+delta    = bull_vol - bear_vol
+cum_d    = ta.cum(delta)
+plot(cum_d, "Δ Cumulé", color.teal, 2)
+hline(0, "Zéro", color.gray, linestyle=hline.style_dotted)`
+    }
+  },
+  {
+    id:'absorption', num:13, title:'Absorption / Volume Imbalance', tag:'PIÈGE', kind:'vio', schema:'absorption',
+    principe:['Bougie avec très fort volume mais mouvement de prix minimal (doji, pinbar)','Un gros acteur absorbe tous les ordres opposés — le prix ne peut pas avancer'],
+    usage:'L\'absorption stoppe le mouvement en cours. Signe d\'un retournement ou d\'un support/résistance institutionnel majeur.',
+    detail:{
+      principe:'L\'absorption se produit quand un acteur institutionnel achète/vend massivement contre le mouvement en cours, absorbant tous les ordres opposés. Résultat : fort volume mais prix qui ne bouge presque pas. C\'est une empreinte institutionnelle puissante à ne pas manquer.',
+      signaux:['Bougie doji ou pinbar + RVOL > 2 → absorption probable','Volume fort + clôture au milieu du range → équilibre forcé','Volume fort sur un niveau clé (support, OB, POC) + rejet → zone institutionnelle confirmée','Plusieurs bougies à fort volume au même niveau → zone très défendue'],
+      parametres:[{p:'Critères',d:'RVOL > 2 + amplitude bougie < 25% du range moyen récent'},{p:'Localisation',d:'Doit se produire sur un niveau clé (POC, HVN, OB, S/R)'},{p:'Confirmation',d:'Bougie suivante qui confirme le sens de l\'absorption'}],
+      erreurs:['Confondre avec une bougie d\'indécision normale (volume faible)','Ignorer la localisation — une absorption loin de tout niveau clé est moins significative','Entrer immédiatement sans attendre confirmation'],
+      pine:`//@version=5
+indicator("Absorption", overlay=true)
+avg_vol   = ta.sma(volume, 20)
+avg_rng   = ta.sma(high - low, 20)
+hi_vol    = volume > avg_vol * 2
+small_rng = (high - low) < avg_rng * 0.35
+absorb    = hi_vol and small_rng
+bgcolor(absorb ? color.new(color.purple, 88) : na)`
+    }
+  },
+  {
+    id:'div_vol', num:14, title:'Divergence Volume / Prix', tag:'SIGNAL', kind:'bear', schema:'div_vol',
+    principe:['Prix fait de nouveaux plus-hauts mais le volume diminue','Signe que les acheteurs s\'épuisent — le momentum baisse'],
+    usage:'Divergence baissière : nouveaux highs sans volume = retournement possible. À confirmer avec RSI ou structure.',
+    detail:{
+      principe:'Une divergence volume/prix se produit quand la direction du prix ne correspond plus à l\'énergie qui la soutient. La plus commune : le prix monte mais le volume sur chaque vague est plus faible. Les acheteurs sont de moins en moins nombreux — le mouvement est fragile.',
+      signaux:['Prix HH + Volume décroissant sur chaque vague → divergence baissière','Prix LL + Volume décroissant → divergence haussière (vendeurs épuisés)','Confirmer avec RSI (divergence RSI simultanée) → signal très fort','Divergence sur un niveau clé (résistance, POC, OB) → probabilité accrue'],
+      parametres:[{p:'Durée',d:'Minimum 2-3 swings pour valider la divergence'},{p:'Type',d:'Baissière (prix ↑, vol ↓) · Haussière (prix ↓, vol ↓)'},{p:'Confirmation',d:'Toujours confirmer avec un CHoCH de structure'}],
+      erreurs:['Trader la divergence sans CHoCH — le prix peut continuer longtemps','Identifier une divergence sur une seule bougie — il faut au moins 2 swings'],
+      pine:`//@version=5
+indicator("Div Vol/Prix", overlay=false)
+vol_avg = ta.sma(volume, 10)
+plot(volume,  "Volume",  close >= open ? color.green : color.red, style=plot.style_histogram)
+plot(vol_avg, "Moy Vol", color.orange, 1)`
+    }
+  },
+  {
+    id:'vol_smc', num:15, title:'Volume Profile + SMC', tag:'MÉTHODE', kind:'bull', schema:'vol_smc',
+    principe:['Superposer le Volume Profile aux zones SMC (OB, FVG, liquidité)','HVN dans un OB = zone institutionnelle très haute probabilité'],
+    usage:'SMC donne la ZONE, Volume Profile donne la CONVICTION. Ensemble = confluence maximale et entrées de haute probabilité.',
+    detail:{
+      principe:'La combinaison VP + SMC est l\'une des approches les plus robustes en analyse institutionnelle. Le SMC identifie les zones et la structure. Le Volume Profile valide ces zones en montrant si elles sont réellement chargées de volume institutionnel. Un OB sans HVN est plus faible qu\'un OB avec HVN.',
+      signaux:['Séquence optimale : HTF tendance → POC/VAL retour → OB en discount → HVN → entrée','OB + HVN + 61.8% Fibonacci → triple confluence → setup très haute probabilité','Sweep de liquidité + retour sur POC → entrée avec volume confirmé','Displacement avec RVOL > 2 + FVG créé → FVG de haute qualité'],
+      parametres:[{p:'Volume Profile',d:'VPVR journalier ou FRVP sur le swing analysé'},{p:'SMC',d:'Structure (HTF) + OB/FVG (MTF) + confirmation (LTF)'},{p:'Confluence',d:'Minimum 3 éléments alignés avant d\'entrer'}],
+      erreurs:['Négliger la tendance HTF — tous les éléments doivent être dans son sens','Entrer sur une confluence sans stop défini (sous le sweep ou sous l\'OB)'],
+      pine:`// Workflow Volume Profile + SMC :
+// ✓ HTF : tendance + pools de liquidité
+// ✓ MTF : Volume Profile → POC / VAH / VAL
+// ✓ FRVP sur OB → HVN ou LVN ?
+// ✓ Sweep + CHoCH → biais confirmé
+// ✓ Retour sur OB + HVN + Fib 61.8%
+// ✓ LTF : CHoCH + entrée
+// ✓ Stop sous le sweep · Target = pool opposé`
+    }
+  }
+];
+
 const INDICATEURS = [
   {
     id:'sma', num:1, title:'SMA — Moyenne Mobile Simple', tag:'TENDANCE', kind:'neutral', schema:'sma',

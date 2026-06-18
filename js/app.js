@@ -155,6 +155,16 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCards(withSections(FIGURES, sections), 'cards');
   }
 
+  if (page === 'volume') {
+    const sections = [
+      { title: 'Le volume brut', desc: 'Lire et interpréter le volume de base — histogramme, RVOL et les 4 configurations prix/volume.', ids: ['vol_base','rvol','vol_tend'] },
+      { title: 'Volume Profile (VPVR)', desc: 'Distribuer le volume par niveau de prix pour révéler les zones d\'intérêt institutionnel.', ids: ['vpvr','poc','va','hvn','lvn'] },
+      { title: 'Fixed Range Volume Profile (FRVP)', desc: 'Calculer un Volume Profile sur une plage précise : swing, zone OB/FVG, range.', ids: ['frvp_base','frvp_swing','frvp_smc'] },
+      { title: 'Lectures avancées', desc: 'Delta cumulé, absorption, divergences et la méthode complète Volume Profile + SMC.', ids: ['delta','absorption','div_vol','vol_smc'] }
+    ];
+    renderCards(withSections(VOLUME, sections), 'cards');
+  }
+
   if (page === 'smc') {
     const sections = [
       { title: 'Structure de marché', desc: 'La base : lire la tendance via les sommets et creux, et repérer ses ruptures.', ids: ['structure','bos','choch'] },

@@ -884,6 +884,415 @@ function s_model() {
   return svgWrap(i);
 }
 
+// ── Volume helpers ────────────────────────────────────────────────────────────
+function genVol(n, seed = 1) {
+  return Array.from({length: n}, (_, i) =>
+    0.4 + Math.abs(Math.sin(i * 0.71 + seed)) * 1.4 + Math.abs(Math.sin(i * 1.37 + seed * 2)) * 0.6
+  );
+}
+
+function volBars(c, v, yt = 168, yb = 236) {
+  const n = c.length, vmax = Math.max(...v);
+  const bw = Math.max(2.5, (PX1 - PX0) / n * 0.55);
+  let s = '';
+  for (let k = 0; k < n; k++) {
+    const x = PX0 + (PX1 - PX0) * k / (n - 1);
+    const hb = (v[k] / vmax) * (yb - yt);
+    const col = k === 0 || c[k] >= c[k - 1] ? C.BULL : C.BEAR;
+    s += `<rect x="${(x-bw/2).toFixed(1)}" y="${(yb-hb).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(hb,1).toFixed(1)}" fill="${col}" fill-opacity="0.55"/>`;
+  }
+  return s;
+}
+
+// Vertical separator between price pane and VP bars
+function vpSep(x = 335) {
+  return `<line x1="${x}" y1="${PYT}" x2="${x}" y2="${PYB}" stroke="#DCE3EA" stroke-width="1.2"/>`;
+}
+
+function calcVP(h, l, v, nB = 20) {
+  const pMin = Math.min(...l), pMax = Math.max(...h);
+  const bSize = (pMax - pMin) / nB;
+  const buckets = new Array(nB).fill(0);
+  for (let k = 0; k < v.length; k++) {
+    const idx = Math.min(Math.floor(((h[k]+l[k])/2 - pMin) / bSize), nB-1);
+    buckets[Math.max(0,idx)] += v[k];
+  }
+  const pocIdx = buckets.indexOf(Math.max(...buckets));
+  const total = buckets.reduce((s,x) => s+x, 0);
+  let acc = buckets[pocIdx], loP = pocIdx, hiP = pocIdx;
+  while (acc < total * 0.70 && (loP > 0 || hiP < nB-1)) {
+    const aL = loP > 0 ? buckets[loP-1] : 0;
+    const aH = hiP < nB-1 ? buckets[hiP+1] : 0;
+    if (aH >= aL && hiP < nB-1) { hiP++; acc += aH; }
+    else if (loP > 0) { loP--; acc += aL; }
+    else break;
+  }
+  return { buckets, pocIdx, vahIdx: hiP, valIdx: loP, pMin, pMax, bSize, nB };
+}
+
+function drawVP(vp, plo, phi, prX1 = 330, barX0 = 342, barX1 = 550, labels = true) {
+  const { buckets, pocIdx, vahIdx, valIdx, pMin, bSize, nB } = vp;
+  const maxB = Math.max(...buckets); let s = '';
+  // VA band
+  const y1va = PYT + (phi - (pMin + (vahIdx+1)*bSize)) / (phi-plo) * (PYB-PYT);
+  const y2va = PYT + (phi - (pMin + valIdx*bSize))     / (phi-plo) * (PYB-PYT);
+  s += `<rect x="${barX0}" y="${Math.min(y1va,y2va).toFixed(1)}" width="${barX1-barX0}" height="${Math.abs(y2va-y1va).toFixed(1)}" fill="${C.TEAL}" fill-opacity="0.07"/>`;
+  // Bars
+  const bH = Math.max(1, (PYB - PYT) / nB * 0.82);
+  for (let idx = 0; idx < nB; idx++) {
+    const midP = pMin + (idx + 0.5) * bSize;
+    const y = PYT + (phi - midP) / (phi-plo) * (PYB-PYT);
+    const bW = (buckets[idx] / maxB) * (barX1 - barX0);
+    const inVA = idx >= valIdx && idx <= vahIdx;
+    const isPOC = idx === pocIdx;
+    const col = isPOC ? C.BEAR : inVA ? C.TEAL : '#8CA0B3';
+    s += `<rect x="${barX0}" y="${(y-bH/2).toFixed(1)}" width="${bW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${col}" fill-opacity="${isPOC ? 0.9 : inVA ? 0.55 : 0.35}"/>`;
+  }
+  // POC line
+  const yPOC = PYT + (phi - (pMin + (pocIdx+0.5)*bSize)) / (phi-plo) * (PYB-PYT);
+  s += `<line x1="${prX1-22}" y1="${yPOC.toFixed(1)}" x2="${barX1}" y2="${yPOC.toFixed(1)}" stroke="${C.BEAR}" stroke-width="2" stroke-linecap="round"/>`;
+  if (labels) s += svgTxt(barX1-2, yPOC-4, 'POC', C.BEAR, 10, 'end');
+  // VAH
+  const yVAH = PYT + (phi - (pMin + (vahIdx+1)*bSize)) / (phi-plo) * (PYB-PYT);
+  s += `<line x1="${prX1-12}" y1="${yVAH.toFixed(1)}" x2="${barX1}" y2="${yVAH.toFixed(1)}" stroke="${C.TEAL}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+  if (labels) s += svgTxt(barX1-2, yVAH-4, 'VAH', C.TEAL, 9, 'end');
+  // VAL
+  const yVAL = PYT + (phi - (pMin + valIdx*bSize)) / (phi-plo) * (PYB-PYT);
+  s += `<line x1="${prX1-12}" y1="${yVAL.toFixed(1)}" x2="${barX1}" y2="${yVAL.toFixed(1)}" stroke="${C.TEAL}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+  if (labels) s += svgTxt(barX1-2, yVAL+12, 'VAL', C.TEAL, 9, 'end');
+  return s;
+}
+
+// ── Volume schemas ────────────────────────────────────────────────────────────
+function s_vol_base() {
+  const c = mkSeries(60, () => 0.32, 3.2);
+  const v = genVol(60, 1.7);
+  const [lo, hi] = bounds(c);
+  const yt1 = 42, yb1 = 148, yt2 = 168, yb2 = 236;
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, PX1, yt1, yb1);
+  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.4"/>`;
+  inner += volBars(c, v, yt2, yb2);
+  inner += svgTxt(80, 57, 'Prix', C.PRICE, 10) + svgTxt(80, 182, 'Volume', C.MUTED, 10);
+  return svgWrap(inner);
+}
+
+function s_rvol() {
+  const c = mkSeries(60, () => 0.28, 3.0);
+  const v = genVol(60, 2.1);
+  // Spike at ~index 45
+  const vs = v.map((x, i) => i === 44 ? x * 3.8 : i === 43 ? x * 2.1 : x);
+  const avgV = v.slice(0, 40).reduce((s, x) => s + x, 0) / 40;
+  const [lo, hi] = bounds(c);
+  const yt1 = 42, yb1 = 148, yt2 = 168, yb2 = 236;
+  const vmax = Math.max(...vs);
+  const avgY = yb2 - (avgV / vmax) * (yb2 - yt2);
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, PX1, yt1, yb1);
+  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.4"/>`;
+  inner += volBars(c, vs, yt2, yb2);
+  // Average volume line
+  inner += `<line x1="${PX0}" y1="${avgY.toFixed(1)}" x2="${PX1}" y2="${avgY.toFixed(1)}" stroke="${C.AMBER}" stroke-width="1.8" stroke-dasharray="6 4"/>`;
+  inner += svgTxt(500, avgY - 5, 'Moy.', C.AMBER, 9, 'end');
+  // RVOL label on spike
+  const spikeX = PX0 + (PX1 - PX0) * 44 / 59;
+  inner += svgTxt(spikeX, yt2 + 12, 'RVOL ↑', C.BEAR, 9, 'middle');
+  return svgWrap(inner);
+}
+
+function s_vol_tend() {
+  // 4 mini panels: Hausse+Vol fort / Hausse+Vol faible / Baisse+Vol fort / Baisse+Vol faible
+  // Split into 4 columns of ~125px each, 2 rows of ~120px
+  const labels = [
+    ['Hausse', 'fort',    C.BULL, C.BULL, 1],
+    ['Hausse', 'faible',  C.BULL, C.MUTED, 0],
+    ['Baisse', 'fort',    C.BEAR, C.BEAR, 1],
+    ['Baisse', 'faible',  C.BEAR, C.MUTED, 0],
+  ];
+  const cols = [60, 195, 330, 465];
+  const w = 115, prH = 100, volH = 48;
+  const yt = 48, yb_p = 148, yt_v = 160, yb_v = 208;
+  let inner = '';
+
+  labels.forEach(([trend, vol, col, vcol, strong], qi) => {
+    const cx = cols[qi];
+    // Mini price line
+    const pts = [];
+    const dir = trend === 'Hausse' ? 1 : -1;
+    for (let i = 0; i < 8; i++) {
+      const noise = Math.sin(i * 0.9 + qi) * 3;
+      const y = yb_p - 10 - (i / 7) * 65 * dir + noise;
+      pts.push(`${(cx + i * (w / 7)).toFixed(1)},${y.toFixed(1)}`);
+    }
+    inner += `<polyline points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`;
+    // Volume bar
+    const bH = strong ? 42 : 18;
+    inner += `<rect x="${(cx + w/2 - 16).toFixed(1)}" y="${(yb_v - bH).toFixed(1)}" width="32" height="${bH}" fill="${vcol}" fill-opacity="0.5" rx="2"/>`;
+    // Labels
+    inner += svgTxt(cx + w/2, yt - 4, `${trend} + vol ${vol}`, col, 9, 'middle', 600, false);
+    // Separator lines
+    if (qi < 3) inner += `<line x1="${(cx + w + 5).toFixed(1)}" y1="${yt}" x2="${(cx + w + 5).toFixed(1)}" y2="${yb_v}" stroke="#E3E9EF" stroke-width="1"/>`;
+  });
+  inner += `<line x1="44" y1="152" x2="568" y2="152" stroke="#E3E9EF" stroke-width="1"/>`;
+  inner += `<line x1="44" y1="212" x2="568" y2="212" stroke="#E3E9EF" stroke-width="1"/>`;
+  return svgWrap(inner);
+}
+
+function _makeVPChart(trendFn, volFn) {
+  const c = mkSeries(60, trendFn, 3.0);
+  const { h, l } = withHL(c, 1.3);
+  const v = Array.from({length: 60}, (_, i) => volFn(i));
+  const vp = calcVP(h, l, v, 20);
+  const [lo, hi] = bounds(c, h, l);
+  return { c, h, l, v, vp, lo, hi };
+}
+
+function s_vpvr() {
+  const { c, h, l, v, vp, lo, hi } = _makeVPChart(
+    () => 0.3,
+    i => 0.5 + Math.abs(Math.sin(i * 0.71 + 1.7)) * 1.4
+  );
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += vpSep() + drawVP(vp, lo, hi);
+  inner += svgTxt(80, 60, 'Prix', C.PRICE, 10) + svgTxt(358, 60, 'Volume Profile', C.MUTED, 9);
+  return svgWrap(inner);
+}
+
+function s_poc() {
+  const { c, h, l, v, vp, lo, hi } = _makeVPChart(
+    (i, n) => i < n*0.5 ? 0.4 : -0.2,
+    i => 0.5 + Math.abs(Math.sin(i * 0.61 + 2.3)) * 1.6
+  );
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += vpSep() + drawVP(vp, lo, hi);
+  // Extra bold POC explanation arrow
+  const pocP = vp.pMin + (vp.pocIdx + 0.5) * vp.bSize;
+  const yPOC = PYT + (hi - pocP) / (hi - lo) * (PYB - PYT);
+  inner += svgTxt(120, yPOC - 8, 'Niveau le plus échangé', C.BEAR, 9);
+  return svgWrap(inner);
+}
+
+function s_va() {
+  const { c, h, l, v, vp, lo, hi } = _makeVPChart(
+    () => 0.1,
+    i => 0.5 + Math.abs(Math.sin(i * 0.73 + 1.1)) * 1.5
+  );
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += vpSep() + drawVP(vp, lo, hi);
+  // Shade VA on price side
+  const y1va = PYT + (hi - (vp.pMin + (vp.vahIdx+1)*vp.bSize)) / (hi-lo) * (PYB-PYT);
+  const y2va = PYT + (hi - (vp.pMin + vp.valIdx*vp.bSize)) / (hi-lo) * (PYB-PYT);
+  inner += `<rect x="${PX0}" y="${Math.min(y1va,y2va).toFixed(1)}" width="${330-PX0}" height="${Math.abs(y2va-y1va).toFixed(1)}" fill="${C.TEAL}" fill-opacity="0.07"/>`;
+  inner += svgTxt(100, 58, 'Value Area 70%', C.TEAL, 9);
+  return svgWrap(inner);
+}
+
+function s_hvn() {
+  const { c, h, l, v, vp, lo, hi } = _makeVPChart(
+    (i, n) => i < n*0.55 ? 0.5 : -0.1,
+    i => {
+      // Create a big cluster mid-range
+      const base = 0.4 + Math.abs(Math.sin(i * 0.71)) * 0.8;
+      const midCluster = Math.exp(-0.5 * ((i - 30) / 8) ** 2) * 2.5;
+      return base + midCluster;
+    }
+  );
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += vpSep() + drawVP(vp, lo, hi, 330, 342, 550, false);
+  // Label HVN = POC area
+  const pocP = vp.pMin + (vp.pocIdx + 0.5) * vp.bSize;
+  const yPOC = PYT + (hi - pocP) / (hi - lo) * (PYB - PYT);
+  inner += svgTxt(348, yPOC - 5, 'HVN', C.BULL, 10, 'start');
+  inner += svgTxt(80, yPOC, 'Support/Résistance fort', C.BULL, 9);
+  // Draw the POC line on price side too
+  inner += `<line x1="${PX0}" y1="${yPOC.toFixed(1)}" x2="330" y2="${yPOC.toFixed(1)}" stroke="${C.BULL}" stroke-width="1.6" stroke-dasharray="6 4"/>`;
+  return svgWrap(inner);
+}
+
+function s_lvn() {
+  const { c, h, l, v, vp, lo, hi } = _makeVPChart(
+    () => 0.35,
+    i => {
+      // Bimodal distribution with thin middle = LVN
+      const bot = Math.exp(-0.5 * ((i - 15) / 8) ** 2) * 2.5;
+      const top = Math.exp(-0.5 * ((i - 45) / 8) ** 2) * 2.5;
+      return 0.2 + bot + top;
+    }
+  );
+  // Find LVN = bucket with lowest volume that's NOT at extremes
+  const midBuckets = vp.buckets.slice(4, vp.nB - 4);
+  const lvnRaw = midBuckets.indexOf(Math.min(...midBuckets)) + 4;
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += vpSep() + drawVP(vp, lo, hi, 330, 342, 550, false);
+  // Label LVN
+  const lvnP = vp.pMin + (lvnRaw + 0.5) * vp.bSize;
+  const yLVN = PYT + (hi - lvnP) / (hi - lo) * (PYB - PYT);
+  inner += svgTxt(348, yLVN - 5, 'LVN', C.AMBER, 10);
+  inner += `<line x1="${PX0}" y1="${yLVN.toFixed(1)}" x2="330" y2="${yLVN.toFixed(1)}" stroke="${C.AMBER}" stroke-width="1.6" stroke-dasharray="6 4"/>`;
+  inner += svgTxt(80, yLVN - 8, 'Traversée rapide', C.AMBER, 9);
+  return svgWrap(inner);
+}
+
+function s_frvp_base() {
+  const c = mkSeries(80, () => 0.22, 3.5);
+  const { h, l } = withHL(c, 1.3);
+  const v = genVol(80, 1.9);
+  // Selected range: bars 25..55
+  const start = 24, end = 54;
+  const subH = h.slice(start, end+1), subL = l.slice(start, end+1), subV = v.slice(start, end+1);
+  const vp = calcVP(subH, subL, subV, 16);
+  const [lo, hi] = bounds(c, h, l);
+  const xS = PX0 + (PX1 - PX0) * start / 79;
+  const xE = PX0 + (PX1 - PX0) * end / 79;
+  // Full price on left, FRVP bars on right
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  // Highlighted range
+  inner += `<rect x="${xS.toFixed(1)}" y="${PYT}" width="${(xE-xS).toFixed(1)}" height="${PYB-PYT}" fill="${C.AMBER}" fill-opacity="0.08"/>`;
+  inner += vpSep() + drawVP(vp, lo, hi, 330, 342, 550, false);
+  inner += svgTxt(barXmid(xS,xE), PYT + 14, 'FRVP', C.AMBER, 9, 'middle');
+  return svgWrap(inner);
+}
+
+function barXmid(x1, x2) { return ((x1 + x2) / 2).toFixed(1); }
+
+function s_frvp_swing() {
+  const c = mkSeries(80, (i, n) => i < n*0.45 ? 0.7 : -0.4, 3.0);
+  const { h, l } = withHL(c, 1.3);
+  const v = genVol(80, 2.3);
+  // Swing = upleg: bars 5..35
+  const start = 4, end = 35;
+  const subH = h.slice(start, end+1), subL = l.slice(start, end+1), subV = v.slice(start, end+1);
+  const vp = calcVP(subH, subL, subV, 16);
+  const [lo, hi] = bounds(c, h, l);
+  const xS = PX0 + (PX1 - PX0) * start / 79;
+  const xE = PX0 + (PX1 - PX0) * end / 79;
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += `<rect x="${xS.toFixed(1)}" y="${PYT}" width="${(xE-xS).toFixed(1)}" height="${PYB-PYT}" fill="${C.BULL}" fill-opacity="0.07"/>`;
+  inner += vpSep() + drawVP(vp, lo, hi);
+  inner += svgTxt(barXmid(xS,xE), PYT + 14, 'Swing analysé', C.BULL, 9, 'middle');
+  return svgWrap(inner);
+}
+
+function s_frvp_smc() {
+  const c = mkSeries(80, (i, n) => i < n*0.5 ? 0.6 : -0.5, 3.2);
+  const { h, l } = withHL(c, 1.3);
+  const v = genVol(80, 1.4);
+  // OB zone around bar 20-24
+  const obStart = 18, obEnd = 24;
+  const subH = h.slice(obStart, obEnd+1), subL = l.slice(obStart, obEnd+1), subV = v.slice(obStart, obEnd+1);
+  const vp = calcVP(subH, subL, subV, 12);
+  const [lo, hi] = bounds(c, h, l);
+  const xS = PX0 + (PX1 - PX0) * obStart / 79;
+  const xE = PX0 + (PX1 - PX0) * obEnd / 79;
+  // OB price bounds
+  const obLo = Math.min(...subL), obHi = Math.max(...subH);
+  const yOBT = PYT + (hi - obHi) / (hi - lo) * (PYB - PYT);
+  const yOBB = PYT + (hi - obLo) / (hi - lo) * (PYB - PYT);
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  inner += `<rect x="${xS.toFixed(1)}" y="${yOBT.toFixed(1)}" width="${(xE-xS).toFixed(1)}" height="${(yOBB-yOBT).toFixed(1)}" fill="${C.VIO}" fill-opacity="0.15" rx="2"/>`;
+  inner += svgTxt(xS + 4, yOBT - 4, 'OB', C.VIO, 9);
+  inner += vpSep() + drawVP(vp, lo, hi, 330, 342, 550, false);
+  // Label HVN / LVN on profile
+  const pocP = vp.pMin + (vp.pocIdx + 0.5) * vp.bSize;
+  const yPOC = PYT + (hi - pocP) / (hi - lo) * (PYB - PYT);
+  inner += svgTxt(348, yPOC - 5, 'HVN → OB solide', C.BULL, 9);
+  return svgWrap(inner);
+}
+
+function s_delta() {
+  const c = mkSeries(70, (i, n) => i < n*0.5 ? 0.5 : -0.4, 3.0);
+  const v = genVol(70, 1.2);
+  const opens = [c[0], ...c.slice(0, -1)];
+  // Delta = +v if bullish candle, -v if bearish
+  const delta = c.map((cl, i) => cl >= opens[i] ? v[i] : -v[i]);
+  // Cumulative delta
+  let cumDelta = [], acc = 0;
+  for (const d of delta) { acc += d; cumDelta.push(acc); }
+  const [lo, hi] = bounds(c);
+  const yt1 = 42, yb1 = 148, yt2 = 168, yb2 = 236;
+  const [dlo, dhi] = bounds(cumDelta);
+  const zero = yt2 + (dhi - 0) / (dhi - dlo) * (yb2 - yt2);
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, PX1, yt1, yb1);
+  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.4"/>`;
+  // Delta histogram
+  const bw = Math.max(2.5, (PX1 - PX0) / 70 * 0.55);
+  for (let k = 0; k < 70; k++) {
+    const x = PX0 + (PX1 - PX0) * k / 69;
+    const y = yt2 + (dhi - cumDelta[k]) / (dhi - dlo) * (yb2 - yt2);
+    const top = Math.min(y, zero), hb = Math.abs(y - zero);
+    const col = cumDelta[k] >= 0 ? C.BULL : C.BEAR;
+    inner += `<rect x="${(x-bw/2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(hb,0.5).toFixed(1)}" fill="${col}" fill-opacity="0.5"/>`;
+  }
+  inner += `<line x1="${PX0}" y1="${zero.toFixed(1)}" x2="${PX1}" y2="${zero.toFixed(1)}" stroke="${C.MUTED}" stroke-width="1.2" stroke-dasharray="4 4"/>`;
+  inner += svgTxt(80, 57, 'Prix', C.PRICE, 10) + svgTxt(80, 182, 'Delta cumulé', C.MUTED, 10);
+  return svgWrap(inner);
+}
+
+function s_absorption() {
+  const c = mkSeries(55, () => 0.25, 2.8);
+  const v = genVol(55, 1.5);
+  // Absorption event at bar ~35: big volume, tiny candle (price barely moves)
+  const vsAbsorb = v.map((x, i) => i === 34 ? x * 4.5 : i === 33 ? x * 2.2 : x);
+  // Patch price to show tiny move on bar 34
+  const cAbsorb = [...c];
+  cAbsorb[35] = cAbsorb[34] + 0.1;
+  const [lo, hi] = bounds(cAbsorb);
+  const yt1 = 42, yb1 = 148, yt2 = 168, yb2 = 236;
+  let inner = Lline(cAbsorb, lo, hi, C.PRICE, 2, null, PX0, PX1, yt1, yb1);
+  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.4"/>`;
+  inner += volBars(cAbsorb, vsAbsorb, yt2, yb2);
+  // Arrow + label on big bar
+  const absX = PX0 + (PX1 - PX0) * 34 / 54;
+  const vmax = Math.max(...vsAbsorb);
+  const barH = (vsAbsorb[34] / vmax) * (yb2 - yt2);
+  inner += svgTxt(absX, yt2 + 14, 'Absorption', C.VIO, 9, 'middle');
+  inner += svgTxt(absX, yb1 - 8, 'Pinbar', C.VIO, 9, 'middle');
+  return svgWrap(inner);
+}
+
+function s_div_vol() {
+  // Price makes HH while volume decreases → divergence baissière
+  const c = mkSeries(65, (i, n) => i < n*0.7 ? 0.6 : 0.1, 2.5);
+  // Artificially create higher highs with decreasing peaks
+  const cc = c.map((v, i) => {
+    if (i < 15) return v;
+    return v + Math.sin((i - 15) * 0.25) * 6 * (1 - (i - 15) / 55);
+  });
+  const v = genVol(65, 1.8);
+  // Volume decreases in second half
+  const vDiv = v.map((x, i) => i < 32 ? x : x * (1 - (i - 32) / 60));
+  const [lo, hi] = bounds(cc);
+  const yt1 = 42, yb1 = 148, yt2 = 168, yb2 = 236;
+  let inner = Lline(cc, lo, hi, C.PRICE, 2, null, PX0, PX1, yt1, yb1);
+  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.4"/>`;
+  inner += volBars(cc, vDiv, yt2, yb2);
+  // Trend line on price (rising) and trend line on volume (falling) — visual arrows
+  inner += svgDline(100, 115, 500, 75, C.PRICE, 1.4);
+  inner += svgDline(100, 220, 500, 215, C.BEAR, 1.4, '5 4');
+  inner += svgTxt(320, 68, 'Prix ↑', C.PRICE, 9);
+  inner += svgTxt(320, 210, 'Volume ↓', C.BEAR, 9);
+  return svgWrap(inner);
+}
+
+function s_vol_smc() {
+  const c = mkSeries(60, (i, n) => i < n*0.5 ? 0.7 : -0.3, 3.0);
+  const { h, l } = withHL(c, 1.3);
+  const v = genVol(60, 2.0);
+  const vp = calcVP(h, l, v, 20);
+  const [lo, hi] = bounds(c, h, l);
+  let inner = Lline(c, lo, hi, C.PRICE, 2, null, PX0, 330, PYT, PYB);
+  // OB zone (around bars 8-12, near low prices before impulse)
+  const obLo = lo + (hi - lo) * 0.12, obHi = lo + (hi - lo) * 0.30;
+  const yOBT = PYT + (hi - obHi) / (hi - lo) * (PYB - PYT);
+  const yOBB = PYT + (hi - obLo) / (hi - lo) * (PYB - PYT);
+  inner += `<rect x="${PX0}" y="${yOBT.toFixed(1)}" width="${270-PX0}" height="${(yOBB-yOBT).toFixed(1)}" fill="${C.VIO}" fill-opacity="0.10" rx="2"/>`;
+  inner += svgTxt(PX0+6, yOBT-4, 'OB', C.VIO, 9);
+  inner += vpSep() + drawVP(vp, lo, hi, 330, 342, 550, false);
+  const pocP = vp.pMin + (vp.pocIdx + 0.5) * vp.bSize;
+  const yPOC = PYT + (hi - pocP) / (hi - lo) * (PYB - PYT);
+  inner += svgTxt(348, yPOC - 5, 'POC', C.BEAR, 10);
+  inner += svgTxt(348, yOBT - 4, 'HVN?', C.VIO, 9);
+  return svgWrap(inner);
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 const SCHEMAS = {
   // Indicateurs
@@ -900,7 +1309,12 @@ const SCHEMAS = {
   structure: s_structure, bos: s_bos, choch: s_choch,
   liquidity: s_liquidity, sweep: s_sweep, inducement: s_inducement,
   ob_bull: s_ob_bull, ob_bear: s_ob_bear, breaker: s_breaker, mitigation: s_mitigation,
-  fvg: s_fvg, displacement: s_displacement, void_: s_void, premium: s_premium, model: s_model
+  fvg: s_fvg, displacement: s_displacement, void_: s_void, premium: s_premium, model: s_model,
+  // Volume
+  vol_base: s_vol_base, rvol: s_rvol, vol_tend: s_vol_tend,
+  vpvr: s_vpvr, poc: s_poc, va: s_va, hvn: s_hvn, lvn: s_lvn,
+  frvp_base: s_frvp_base, frvp_swing: s_frvp_swing, frvp_smc: s_frvp_smc,
+  delta: s_delta, absorption: s_absorption, div_vol: s_div_vol, vol_smc: s_vol_smc
 };
 
 function getSchema(id) {
