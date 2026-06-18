@@ -299,222 +299,338 @@ function svgBand(x1, y1, x2, y2, color, op = 0.10) {
   return `<rect x="${x1}" y="${y1}" width="${x2 - x1}" height="${y2 - y1}" fill="${color}" fill-opacity="${op}"/>`;
 }
 
-// ── Price series generators (deterministic) ─────────────────────────────────
-function mkClose(n, fn) { return Array.from({ length: n }, (_, i) => fn(i, n)); }
+// ── Price series generators (deterministic, realistic noise) ─────────────────
+function rnd(seed) {
+  // Deterministic pseudo-random [0,1) using LCG
+  let s = (seed * 1664525 + 1013904223) & 0xffffffff;
+  return ((s >>> 0) / 4294967296);
+}
 
-function withHL(c, noise = 0.8) {
-  const h = c.map((v, i) => v + noise * (0.3 + 0.7 * Math.sin(i * 1.7 + 0.5) * 0.5 + 0.5));
-  const l = c.map((v, i) => v - noise * (0.3 + 0.7 * Math.sin(i * 2.1 + 1.2) * 0.5 + 0.5));
-  const v = c.map((_, i) => 0.5 + Math.sin(i * 0.8) * 0.3 + 0.7);
+// Brownian-like price series with trend
+function mkSeries(n, trend, volatility, start = 100) {
+  const c = [start];
+  for (let i = 1; i < n; i++) {
+    // Multi-frequency noise for realistic look
+    const noise = Math.sin(i * 0.23 + 1.1) * 0.45
+                + Math.sin(i * 0.61 + 2.3) * 0.28
+                + Math.sin(i * 1.37 + 0.7) * 0.15
+                + Math.sin(i * 3.14 + 1.9) * 0.12;
+    c.push(c[i - 1] + trend(i, n) + noise * volatility);
+  }
+  return c;
+}
+
+function withHL(c, hl = 1.2) {
+  const h = c.map((v, i) => v + hl * (0.3 + Math.abs(Math.sin(i * 1.31 + 0.5)) * 0.7));
+  const l = c.map((v, i) => v - hl * (0.3 + Math.abs(Math.sin(i * 1.73 + 1.2)) * 0.7));
+  const v = c.map((_, i) => 0.5 + Math.abs(Math.sin(i * 0.77)) * 1.5);
   return { c, h, l, v };
 }
 
-// ── Indicator schemas ────────────────────────────────────────────────────────
+// Clamp values so nothing escapes the SVG frame
+function clamp(arr, lo, hi) {
+  return arr.map(v => v === null ? null : Math.max(lo, Math.min(hi, v)));
+}
+
+// ── Indicator schemas ─────────────────────────────────────────────────────────
 function s_sma() {
-  const c = mkClose(70, (i, n) => 100 + i * 0.45 + Math.sin(i * 0.28) * 4);
+  // Uptrend with realistic noise
+  const c = mkSeries(70, (i, n) => 0.5, 3.2);
   const m = sma(c, 20);
   const [lo, hi] = bounds(c, m);
-  let inner = Lline(c, lo, hi, C.PRICE, 1.8) + Lline(m, lo, hi, C.AMBER, 3);
-  inner += svgTxt(130, 62, 'SMA 20', C.AMBER, 11) + svgTxt(470, 230, 'Prix', C.PRICE, 10, 'end');
+  let inner = Lline(c, lo, hi, C.PRICE, 1.8) + Lline(m, lo, hi, C.AMBER, 2.8);
+  // Label at end of each line
+  const lastM = m.map((v,i) => ({v,i})).filter(x => x.v !== null).pop();
+  if (lastM) inner += svgTxt(130, 62, 'SMA 20', C.AMBER, 11) + svgTxt(500, 228, 'Prix', C.PRICE, 10, 'end');
   return svgWrap(inner);
 }
 
 function s_ema() {
-  const c = mkClose(70, (i, n) => 100 + i * 0.42 + Math.sin(i * 0.35) * 4.5);
+  const c = mkSeries(70, (i, n) => 0.48, 3.5);
   const e = ema(c, 20), m = sma(c, 20);
   const [lo, hi] = bounds(c, e, m);
-  let inner = Lline(c, lo, hi, C.PRICE, 1.6) + Lline(m, lo, hi, C.VIO, 2.4, '7 5') + Lline(e, lo, hi, C.AMBER, 3);
-  inner += svgTxt(130, 60, 'EMA 20', C.AMBER, 11) + svgTxt(320, 228, 'SMA 20', C.VIO, 11);
+  let inner = Lline(c, lo, hi, C.PRICE, 1.6)
+    + Lline(m, lo, hi, C.VIO, 2.2, '7 5')
+    + Lline(e, lo, hi, C.AMBER, 2.8);
+  inner += svgTxt(130, 62, 'EMA 20 (réactive)', C.AMBER, 10)
+    + svgTxt(320, 228, 'SMA 20 (lente)', C.VIO, 10);
   return svgWrap(inner);
 }
 
 function s_cross() {
-  const c = mkClose(80, (i, n) => 100 + (i < n * 0.5 ? -i * 0.7 : (i - n * 0.5) * 0.95) + Math.sin(i * 0.4) * 3);
-  const f = ema(c, 10), s = ema(c, 30);
+  // Downtrend then uptrend to show both crosses
+  const c = mkSeries(80, (i, n) => i < n * 0.45 ? -0.55 : 0.75, 2.8);
+  const f = ema(c, 9), s = ema(c, 26);
   const [lo, hi] = bounds(c, f, s);
-  let inner = Lline(c, lo, hi, C.PRICE, 1.5) + Lline(s, lo, hi, C.VIO, 2.6) + Lline(f, lo, hi, C.AMBER, 2.6);
+  let inner = Lline(c, lo, hi, C.PRICE, 1.5)
+    + Lline(s, lo, hi, C.VIO, 2.4)
+    + Lline(f, lo, hi, C.AMBER, 2.4);
   for (let k = 1; k < c.length; k++) {
-    if (!f[k] || !s[k] || !f[k - 1] || !s[k - 1]) continue;
-    if (f[k - 1] <= s[k - 1] && f[k] > s[k]) {
-      const [x, y] = atXY(k, s, lo, hi);
-      inner += svgDot(x, y, C.BULL, 5) + svgTxt(x, y + 22, 'Golden', C.BULL, 10, 'middle');
+    if (!f[k] || !s[k] || !f[k-1] || !s[k-1]) continue;
+    if (f[k-1] <= s[k-1] && f[k] > s[k]) {
+      // Use midpoint between fast and slow at crossing
+      const yMid = (PYT + (hi - f[k]) / (hi - lo) * (PYB - PYT) + PYT + (hi - s[k]) / (hi - lo) * (PYB - PYT)) / 2;
+      const x = PX0 + (PX1 - PX0) * k / (c.length - 1);
+      inner += `<circle cx="${x.toFixed(1)}" cy="${yMid.toFixed(1)}" r="5" fill="#fff" stroke="${C.BULL}" stroke-width="2.4"/>`;
+      inner += svgTxt(x, yMid + 22, 'Golden', C.BULL, 10, 'middle');
     }
-    if (f[k - 1] >= s[k - 1] && f[k] < s[k]) {
-      const [x, y] = atXY(k, s, lo, hi);
-      inner += svgDot(x, y, C.BEAR, 5) + svgTxt(x, y - 14, 'Death', C.BEAR, 10, 'middle');
+    if (f[k-1] >= s[k-1] && f[k] < s[k]) {
+      const yMid = (PYT + (hi - f[k]) / (hi - lo) * (PYB - PYT) + PYT + (hi - s[k]) / (hi - lo) * (PYB - PYT)) / 2;
+      const x = PX0 + (PX1 - PX0) * k / (c.length - 1);
+      inner += `<circle cx="${x.toFixed(1)}" cy="${yMid.toFixed(1)}" r="5" fill="#fff" stroke="${C.BEAR}" stroke-width="2.4"/>`;
+      inner += svgTxt(x, yMid - 14, 'Death', C.BEAR, 10, 'middle');
     }
   }
-  inner += svgTxt(120, 56, 'EMA rapide', C.AMBER, 10) + svgTxt(120, 230, 'EMA lente', C.VIO, 10);
+  inner += svgTxt(80, 56, 'EMA rapide', C.AMBER, 10)
+    + svgTxt(80, 230, 'EMA lente', C.VIO, 10);
   return svgWrap(inner);
 }
 
 function s_boll() {
-  const c = mkClose(70, (i, n) => 100 + i * 0.12 + (i < n * 0.5 ? Math.sin(i * 0.5) * 1.5 : Math.sin(i * 0.5) * 5));
-  const m = sma(c, 20), sd = rstd(c, 20);
-  const up = m.map((v, i) => v !== null ? v + 2 * sd[i] : null);
-  const dn = m.map((v, i) => v !== null ? v - 2 * sd[i] : null);
-  const [lo, hi] = bounds(c, up, dn);
-  let inner = fillBand(up, dn, lo, hi, C.TEAL, 0.10);
-  inner += Lline(up, lo, hi, C.TEAL, 1.8) + Lline(dn, lo, hi, C.TEAL, 1.8) + Lline(m, lo, hi, C.TEAL, 1.8, '6 5') + Lline(c, lo, hi, C.PRICE, 2);
-  inner += svgTxt(130, 226, 'squeeze', C.MUTED, 10) + svgTxt(460, 62, 'expansion', C.MUTED, 10, 'end');
+  // Low volatility then high volatility
+  const c = mkSeries(70, (i, n) => 0.1, i => i < 35 ? 1.2 : 4.5);
+  // Rebuild with variable vol
+  const cc = [100];
+  for (let i = 1; i < 70; i++) {
+    const vol = i < 35 ? 1.2 : 4.5;
+    const noise = Math.sin(i * 0.23 + 1.1) * 0.45 + Math.sin(i * 0.61 + 2.3) * 0.28 + Math.sin(i * 1.37 + 0.7) * 0.15;
+    cc.push(cc[i-1] + 0.1 + noise * vol);
+  }
+  const m = sma(cc, 20), sd = rstd(cc, 20);
+  const up = m.map((v, i) => v !== null && sd[i] !== null ? v + 2 * sd[i] : null);
+  const dn = m.map((v, i) => v !== null && sd[i] !== null ? v - 2 * sd[i] : null);
+  const [lo, hi] = bounds(cc, up, dn);
+  let inner = fillBand(up, dn, lo, hi, C.TEAL, 0.09)
+    + Lline(up, lo, hi, C.TEAL, 1.8)
+    + Lline(dn, lo, hi, C.TEAL, 1.8)
+    + Lline(m,  lo, hi, C.TEAL, 1.6, '5 4')
+    + Lline(cc, lo, hi, C.PRICE, 2);
+  inner += svgTxt(140, 228, 'squeeze', C.MUTED, 10)
+    + svgTxt(490, 60, 'expansion', C.MUTED, 10, 'end');
   return svgWrap(inner);
 }
 
 function s_keltner() {
-  const { c, h, l } = withHL(mkClose(70, (i, n) => 100 + i * 0.3 + Math.sin(i * 0.35) * 4));
+  const base = mkSeries(70, (i) => 0.35, 3.2);
+  const { c, h, l } = withHL(base, 1.4);
   const e = ema(c, 20), a = atrCalc(h, l, c, 14);
   const up = e.map((v, i) => v !== null && a[i] !== null ? v + 2 * a[i] : null);
   const dn = e.map((v, i) => v !== null && a[i] !== null ? v - 2 * a[i] : null);
   const [lo, hi] = bounds(c, up, dn);
-  let inner = fillBand(up, dn, lo, hi, C.VIO, 0.09);
-  inner += Lline(up, lo, hi, C.VIO, 1.8) + Lline(dn, lo, hi, C.VIO, 1.8) + Lline(e, lo, hi, C.VIO, 1.8, '6 5') + Lline(c, lo, hi, C.PRICE, 2);
-  inner += svgTxt(130, 62, 'EMA ± ATR', C.VIO, 11);
+  let inner = fillBand(up, dn, lo, hi, C.VIO, 0.09)
+    + Lline(up, lo, hi, C.VIO, 1.8)
+    + Lline(dn, lo, hi, C.VIO, 1.8)
+    + Lline(e,  lo, hi, C.VIO, 1.6, '5 4')
+    + Lline(c,  lo, hi, C.PRICE, 2);
+  inner += svgTxt(130, 62, 'EMA ± 2×ATR', C.VIO, 11);
   return svgWrap(inner);
 }
 
 function s_vwap() {
-  const { c, h, l, v } = withHL(mkClose(70, (i, n) => 100 + i * 0.35 + Math.sin(i * 0.4) * 5));
+  const base = mkSeries(70, (i) => 0.35, 3.5);
+  const { c, h, l, v } = withHL(base, 1.3);
   const w = vwapCalc(h, l, c, v);
   const [lo, hi] = bounds(c, w);
-  let inner = Lline(c, lo, hi, C.PRICE, 2) + Lline(w, lo, hi, C.BLUE, 3);
+  let inner = Lline(c, lo, hi, C.PRICE, 2)
+    + Lline(w, lo, hi, C.BLUE, 2.8);
   inner += svgTxt(130, 60, 'VWAP', C.BLUE, 12);
   return svgWrap(inner);
 }
 
 function s_rsi() {
-  const c = mkClose(80, (i) => 100 + 9 * Math.sin(i / 7));
-  const r = rsi(c, 14);
-  const vmin = 2, vmax = 98;
-  let inner = hlev(70, vmin, vmax, C.BEAR, '70 surachat');
+  // Oscillating series to show RSI going through zones
+  const c = mkSeries(90, (i) => 0, 4.2);
+  // Add oscillation to make RSI cycle through overbought/oversold
+  const cc = c.map((v, i) => v + 12 * Math.sin(i * 0.18));
+  const r = rsi(cc, 14).map(v => v === null ? null : Math.max(5, Math.min(95, v)));
+  const vmin = 0, vmax = 100;
+  let inner = hlev(70, vmin, vmax, C.BEAR, '70');
   inner += hlev(50, vmin, vmax, C.MUTED, null);
-  inner += hlev(30, vmin, vmax, C.BULL, '30 survente');
+  inner += hlev(30, vmin, vmax, C.BULL, '30');
   inner += Lline(r, vmin, vmax, C.TEAL, 2.6);
-  inner += svgTxt(70, 60, 'RSI 14', C.TEAL, 11);
+  // Color background zones
+  inner += `<rect x="${PX0}" y="${PYT}" width="${PX1-PX0}" height="${(PYB-PYT)*0.23}" fill="${C.BEAR}" fill-opacity="0.04"/>`;
+  inner += `<rect x="${PX0}" y="${PYT+(PYB-PYT)*0.77}" width="${PX1-PX0}" height="${(PYB-PYT)*0.23}" fill="${C.BULL}" fill-opacity="0.04"/>`;
+  inner += svgTxt(70, 58, 'RSI 14', C.TEAL, 11)
+    + svgTxt(540, 82, 'surachat', C.BEAR, 9, 'end')
+    + svgTxt(540, 232, 'survente', C.BULL, 9, 'end');
   return svgWrap(inner);
 }
 
 function s_macd() {
-  const c = mkClose(80, (i, n) => 100 + (i < n * 0.5 ? i * 0.5 : (n * 0.5 - i) * 0.5) + Math.sin(i * 0.3) * 2);
+  // Trend reversal mid-series so MACD crosses zero
+  const c = mkSeries(90, (i, n) => i < n * 0.5 ? 0.55 : -0.55, 2.5);
   const { ln, sg, hs } = macdCalc(c);
-  const validVals = [...ln, ...sg].filter(v => v !== null);
-  const m = Math.max(...validVals.map(Math.abs)) || 1;
-  const vmin = -m * 1.2, vmax = m * 1.2;
-  const n = hs.length;
+  const validVals = [...ln, ...sg].filter(v => v !== null && isFinite(v));
+  if (!validVals.length) return svgWrap('');
+  const m = Math.max(...validVals.map(Math.abs));
+  const vmin = -m * 1.25, vmax = m * 1.25;
+  const nn = hs.length;
   const zero = PYT + (vmax - 0) / (vmax - vmin) * (PYB - PYT);
-  const bw = (PX1 - PX0) / n * 0.6;
+  const bw = Math.max(2, (PX1 - PX0) / nn * 0.55);
   let inner = hlev(0, vmin, vmax, C.MUTED, null);
-  for (let k = 0; k < n; k++) {
+  for (let k = 0; k < nn; k++) {
     if (hs[k] === null) continue;
-    const x = PX0 + (PX1 - PX0) * k / (n - 1);
+    const x = PX0 + (PX1 - PX0) * k / (nn - 1);
     const y = PYT + (vmax - hs[k]) / (vmax - vmin) * (PYB - PYT);
     const col = hs[k] >= 0 ? C.BULL : C.BEAR;
     const top = Math.min(y, zero);
-    inner += `<rect x="${(x - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(Math.abs(y - zero), 0.6).toFixed(1)}" fill="${col}" fill-opacity="0.45"/>`;
+    inner += `<rect x="${(x-bw/2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(Math.abs(y-zero),0.5).toFixed(1)}" fill="${col}" fill-opacity="0.5"/>`;
   }
-  inner += Lline(ln, vmin, vmax, C.TEAL, 2.6) + Lline(sg, vmin, vmax, C.AMBER, 2.4);
-  inner += svgTxt(120, 60, 'MACD', C.TEAL, 11) + svgTxt(280, 60, 'Signal', C.AMBER, 11);
+  inner += Lline(ln, vmin, vmax, C.TEAL, 2.4)
+    + Lline(sg, vmin, vmax, C.AMBER, 2.2);
+  inner += svgTxt(80, 60, 'MACD', C.TEAL, 11)
+    + svgTxt(220, 60, 'Signal', C.AMBER, 11);
   return svgWrap(inner);
 }
 
 function s_stoch() {
-  const c = mkClose(80, (i) => 100 + 8 * Math.sin(i / 6));
-  const h = c.map((v, i) => v + 0.8), l = c.map((v, i) => v - 0.8);
+  // Series that creates clear overbought/oversold cycles
+  const base = mkSeries(90, (i) => 0, 3.0);
+  const c = base.map((v, i) => v + 10 * Math.sin(i * 0.16));
+  const h = c.map((v, i) => v + 1.2 + Math.abs(Math.sin(i * 0.9)) * 0.8);
+  const l = c.map((v, i) => v - 1.2 - Math.abs(Math.sin(i * 1.1)) * 0.8);
   const { k, dd } = stochCalc(h, l, c, 14, 3);
-  const vmin = -3, vmax = 103;
+  const vmin = 0, vmax = 100;
   let inner = hlev(80, vmin, vmax, C.BEAR, '80') + hlev(20, vmin, vmax, C.BULL, '20');
-  inner += Lline(k, vmin, vmax, C.TEAL, 2.6) + Lline(dd, vmin, vmax, C.AMBER, 2.2, '6 4');
-  inner += svgTxt(120, 60, '%K', C.TEAL, 11) + svgTxt(280, 60, '%D', C.AMBER, 11);
+  inner += `<rect x="${PX0}" y="${PYT}" width="${PX1-PX0}" height="${(PYB-PYT)*0.17}" fill="${C.BEAR}" fill-opacity="0.05"/>`;
+  inner += `<rect x="${PX0}" y="${PYT+(PYB-PYT)*0.83}" width="${PX1-PX0}" height="${(PYB-PYT)*0.17}" fill="${C.BULL}" fill-opacity="0.05"/>`;
+  inner += Lline(k, vmin, vmax, C.TEAL, 2.4) + Lline(dd, vmin, vmax, C.AMBER, 2, '6 4');
+  inner += svgTxt(80, 60, '%K', C.TEAL, 11) + svgTxt(220, 60, '%D', C.AMBER, 11);
   return svgWrap(inner);
 }
 
 function s_atr() {
-  const { c, h, l } = withHL(mkClose(70, (i, n) => 100 + i * 0.1 + (i < n * 0.5 ? Math.sin(i * 0.6) * 1.5 : Math.sin(i * 0.6) * 6)));
-  const a = atrCalc(h, l, c, 14);
-  const [lo, hi] = bounds(a);
-  let inner = Lline(a, lo, hi, C.VIO, 2.8);
-  inner += svgTxt(130, 228, 'calme', C.MUTED, 10) + svgTxt(460, 72, 'volatilité ↑', C.MUTED, 10, 'end');
+  // Low vol then shock
+  const cc = [100];
+  for (let i = 1; i < 70; i++) {
+    const vol = i < 42 ? 1.0 : 4.8;
+    const noise = Math.sin(i * 0.31 + 1.1) * 0.5 + Math.sin(i * 0.73 + 2.3) * 0.3;
+    cc.push(cc[i-1] + 0.05 + noise * vol);
+  }
+  const { h, l } = withHL(cc, 1.5);
+  const a = atrCalc(h, l, cc, 14);
+  const valid = a.filter(v => v !== null);
+  if (!valid.length) return svgWrap('');
+  const [lo, hi] = bounds(valid);
+  // Shade the two zones
+  const splitIdx = 42;
+  const splitX = PX0 + (PX1 - PX0) * splitIdx / (cc.length - 1);
+  let inner = `<rect x="${PX0}" y="${PYT}" width="${splitX-PX0}" height="${PYB-PYT}" fill="${C.MUTED}" fill-opacity="0.04"/>`;
+  inner += `<rect x="${splitX}" y="${PYT}" width="${PX1-splitX}" height="${PYB-PYT}" fill="${C.BEAR}" fill-opacity="0.04"/>`;
+  inner += Lline(a, lo, hi, C.VIO, 2.8);
+  inner += svgTxt(100, 228, 'faible volatilité', C.MUTED, 10)
+    + svgTxt(490, 72, 'volatilité ↑', C.BEAR, 10, 'end');
   return svgWrap(inner);
 }
 
 function s_adx() {
-  const { c, h, l } = withHL(mkClose(85, (i, n) => 100 + (i < n * 0.55 ? i * 0.9 : 0) + Math.sin(i * 0.35) * 2.5), 1.2);
+  // Strong trend then range
+  const base = mkSeries(90, (i, n) => i < n * 0.55 ? 0.9 : 0.05, 2.0);
+  const { c, h, l } = withHL(base, 1.3);
   const { adxl, pdi, mdi } = adxCalc(h, l, c, 14);
-  const vals = [...adxl, ...pdi, ...mdi].filter(v => v !== null && isFinite(v));
-  if (!vals.length) return svgWrap('');
-  const vmin = 0, vmax = Math.max(...vals) * 1.12;
-  let inner = hlev(25, vmin, vmax, C.MUTED, '25');
-  inner += Lline(pdi, vmin, vmax, C.BULL, 2.2) + Lline(mdi, vmin, vmax, C.BEAR, 2.2) + Lline(adxl, vmin, vmax, C.INK, 2.8);
-  inner += svgTxt(120, 60, 'ADX', C.INK, 11) + svgTxt(220, 60, '+DI', C.BULL, 10) + svgTxt(300, 60, '−DI', C.BEAR, 10);
+  const vals = [...(adxl||[]), ...(pdi||[]), ...(mdi||[])].filter(v => v !== null && isFinite(v) && v >= 0);
+  if (!vals.length) return svgWrap('<text x="300" y="140" text-anchor="middle" fill="#aaa">Chargement...</text>');
+  const vmin = 0, vmax = Math.min(Math.max(...vals) * 1.15, 100);
+  let inner = hlev(25, vmin, vmax, C.MUTED, '25 — seuil tendance');
+  inner += Lline(pdi,  vmin, vmax, C.BULL, 2.0)
+    + Lline(mdi,  vmin, vmax, C.BEAR, 2.0)
+    + Lline(adxl, vmin, vmax, C.INK, 2.8);
+  inner += svgTxt(80, 60, 'ADX (force)', C.INK, 11)
+    + svgTxt(220, 60, '+DI', C.BULL, 10)
+    + svgTxt(320, 60, '−DI', C.BEAR, 10);
   return svgWrap(inner);
 }
 
 function s_supertrend() {
-  const { c, h, l } = withHL(mkClose(80, (i, n) => 100 + (i < n * 0.58 ? i * 0.8 : (n * 0.58 - i) * 0.95) + Math.sin(i * 0.4) * 2));
+  const base = mkSeries(80, (i, n) => i < n * 0.55 ? 0.75 : -0.85, 2.5);
+  const { c, h, l } = withHL(base, 1.3);
   const { st, d } = supertrendCalc(h, l, c, 10, 3);
-  const stVals = st.filter(v => v !== null);
-  const [lo, hi] = bounds(c, stVals);
+  const stValid = st.filter(v => v !== null);
+  if (!stValid.length) return svgWrap('');
+  const [lo, hi] = bounds(c, stValid);
+
   let inner = Lline(c, lo, hi, C.PRICE, 2);
-  let bullPts = [], bearPts = [];
+
+  // Split SuperTrend into contiguous runs per direction — avoids crossing lines
+  let segments = [], cur = null;
   for (let k = 0; k < st.length; k++) {
     if (st[k] === null) continue;
-    if (d[k]) bullPts.push(k); else bearPts.push(k);
-  }
-  const mkSeg = (idxs, color) => {
-    const pts = [];
-    for (const k of idxs) {
-      const x = PX0 + (PX1 - PX0) * k / (st.length - 1);
-      const y = PYT + (hi - st[k]) / (hi - lo) * (PYB - PYT);
-      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    if (!cur || d[k] !== cur.dir) {
+      if (cur) segments.push(cur);
+      cur = { dir: d[k], pts: [] };
     }
-    return pts.length ? `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2.8" stroke-linecap="round"/>` : '';
-  };
-  inner += mkSeg(bullPts, C.BULL) + mkSeg(bearPts, C.BEAR);
-  inner += svgTxt(120, 228, 'ligne sous le prix', C.BULL, 10) + svgTxt(470, 72, 'bascule', C.BEAR, 10, 'end');
+    const x = PX0 + (PX1 - PX0) * k / (st.length - 1);
+    const y = PYT + (hi - st[k]) / (hi - lo) * (PYB - PYT);
+    cur.pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+  }
+  if (cur) segments.push(cur);
+
+  for (const seg of segments) {
+    const col = seg.dir ? C.BULL : C.BEAR;
+    inner += `<polyline points="${seg.pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+
+  inner += svgTxt(90, 228, 'support dynamique', C.BULL, 10)
+    + svgTxt(490, 68, 'résistance', C.BEAR, 10, 'end');
   return svgWrap(inner);
 }
 
 function s_ichimoku() {
-  const { c, h, l } = withHL(mkClose(80, (i, n) => 100 + (i < n * 0.6 ? i * 0.7 : (n * 0.6 - i) * 0.7) + Math.sin(i * 0.3) * 3));
+  const base = mkSeries(90, (i, n) => i < n * 0.6 ? 0.65 : -0.6, 2.8);
+  const { c, h, l } = withHL(base, 1.4);
   const { t, k, a, b } = ichimokuCalc(h, l);
-  const vals = [...a, ...b].filter(v => v !== null);
-  const [lo, hi] = bounds(c, vals);
-  let inner = fillBand(a, b, lo, hi, C.TEAL, 0.13);
-  inner += Lline(a, lo, hi, C.BULL, 1.4) + Lline(b, lo, hi, C.BEAR, 1.4);
-  inner += Lline(t, lo, hi, C.BLUE, 2.2) + Lline(k, lo, hi, C.AMBER, 2.2) + Lline(c, lo, hi, C.PRICE, 2);
-  inner += svgTxt(300, 150, 'Nuage (Kumo)', C.TEAL, 10, 'middle') + svgTxt(130, 60, 'Tenkan', C.BLUE, 10) + svgTxt(130, 230, 'Kijun', C.AMBER, 10);
+  const allVals = [...(a||[]), ...(b||[])].filter(v => v !== null);
+  if (!allVals.length) return svgWrap('');
+  const [lo, hi] = bounds(c, allVals);
+  let inner = fillBand(a, b, lo, hi, C.TEAL, 0.12);
+  inner += Lline(a, lo, hi, C.BULL, 1.4)
+    + Lline(b, lo, hi, C.BEAR, 1.4)
+    + Lline(t, lo, hi, C.BLUE, 2.2)
+    + Lline(k, lo, hi, C.AMBER, 2.2)
+    + Lline(c, lo, hi, C.PRICE, 2);
+  inner += svgTxt(310, 155, 'Nuage (Kumo)', C.TEAL, 10, 'middle')
+    + svgTxt(80, 60, 'Tenkan', C.BLUE, 10)
+    + svgTxt(80, 228, 'Kijun', C.AMBER, 10);
   return svgWrap(inner);
 }
 
 function s_sar() {
-  const { c, h, l } = withHL(mkClose(80, (i, n) => 100 + (i < n * 0.55 ? i * 0.8 : (n * 0.55 - i) * 0.9) + Math.sin(i * 0.4) * 2));
+  const base = mkSeries(80, (i, n) => i < n * 0.52 ? 0.75 : -0.8, 2.5);
+  const { c, h, l } = withHL(base, 1.3);
   const s = psarCalc(h, l);
-  const [lo, hi] = bounds(c, h, l, s);
+  const [lo, hi] = bounds(c, h, l, s.filter(v => v !== null));
   let inner = Lline(c, lo, hi, C.PRICE, 2);
   for (let k = 0; k < c.length; k++) {
     if (s[k] === null) continue;
     const x = PX0 + (PX1 - PX0) * k / (c.length - 1);
     const ys = PYT + (hi - s[k]) / (hi - lo) * (PYB - PYT);
+    // Only draw if SAR is clearly above or below price (avoid overlap)
+    const yc = PYT + (hi - c[k]) / (hi - lo) * (PYB - PYT);
+    if (Math.abs(ys - yc) < 3) continue;
     const col = s[k] < c[k] ? C.BULL : C.BEAR;
-    inner += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="2.4" fill="${col}"/>`;
+    inner += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="2.8" fill="${col}"/>`;
   }
-  inner += svgTxt(120, 228, 'points sous le prix', C.BULL, 10) + svgTxt(470, 72, 'retournement', C.BEAR, 10, 'end');
+  inner += svgTxt(80, 228, 'SAR sous le prix (hausse)', C.BULL, 9)
+    + svgTxt(490, 68, 'flip', C.BEAR, 10, 'end');
   return svgWrap(inner);
 }
 
 function s_combine() {
-  const c = mkClose(80, (i, n) => 100 + i * 0.4 + Math.sin(i * 0.35) * 3);
+  const c = mkSeries(85, (i) => 0.42, 3.0);
   const e = ema(c, 20);
   const [lo, hi] = bounds(c, e);
-  const yt1 = 42, yb1 = 150, yt2 = 168, yb2 = 236;
-  let inner = Lline(c, lo, hi, C.PRICE, 1.8, null, PX0, PX1, yt1, yb1);
-  inner += Lline(e, lo, hi, C.AMBER, 2.6, null, PX0, PX1, yt1, yb1);
-  inner += svgTxt(120, 58, 'Tendance : EMA', C.AMBER, 10);
-  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.2"/>`;
+  const yt1 = 42, yb1 = 148, yt2 = 168, yb2 = 236;
+  let inner = Lline(c, lo, hi, C.PRICE, 1.8, null, PX0, PX1, yt1, yb1)
+    + Lline(e, lo, hi, C.AMBER, 2.4, null, PX0, PX1, yt1, yb1);
+  // Background fill: price above EMA = green
+  inner += svgTxt(80, 57, 'Tendance : EMA', C.AMBER, 10);
+  inner += `<line x1="44" y1="158" x2="568" y2="158" stroke="#DCE3EA" stroke-width="1.4"/>`;
   const r = rsi(c, 14);
-  inner += hlev(70, 2, 98, C.BEAR, null, PX0, PX1, yt2, yb2);
-  inner += hlev(30, 2, 98, C.BULL, null, PX0, PX1, yt2, yb2);
-  inner += Lline(r, 2, 98, C.TEAL, 2.4, null, PX0, PX1, yt2, yb2);
-  inner += svgTxt(120, 182, 'Momentum : RSI', C.TEAL, 10);
+  inner += hlev(70, 2, 98, C.BEAR, null, PX0, PX1, yt2, yb2)
+    + hlev(30, 2, 98, C.BULL, null, PX0, PX1, yt2, yb2)
+    + Lline(r, 2, 98, C.TEAL, 2.4, null, PX0, PX1, yt2, yb2);
+  inner += svgTxt(80, 182, 'Momentum : RSI', C.TEAL, 10);
   return svgWrap(inner);
 }
 

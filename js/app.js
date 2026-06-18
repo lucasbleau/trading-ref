@@ -90,7 +90,7 @@ function renderCards(data, containerId) {
     if (item.section) {
       const band = document.createElement('div');
       band.className = 'section-band';
-      band.innerHTML = `<h2>${item.title}</h2><p>${item.desc}</p>`;
+      band.innerHTML = `<div class="section-band-accent"></div><div class="section-band-inner"><h2>${item.title}</h2><p>${item.desc}</p></div>`;
       container.appendChild(band);
       return;
     }
@@ -104,13 +104,13 @@ function renderCards(data, containerId) {
     const tagClass = 'tag-' + item.kind;
 
     card.innerHTML = `
-      <div class="ind-card-head">
-        <span class="ind-num">${String(item.num).padStart(2,'0')}</span>
-        <h3>${item.title}</h3>
-        <span class="tag ${tagClass}">${item.tag}</span>
-      </div>
       <div class="ind-schema">${getSchema(item.schema)}</div>
-      <div class="ind-card-body">
+      <div class="ind-card-right">
+        <div class="ind-card-head">
+          <span class="ind-num">${String(item.num).padStart(2,'0')}</span>
+          <h3>${item.title}</h3>
+          <span class="tag ${tagClass}">${item.tag}</span>
+        </div>
         <div class="ind-principe"><ul>${principeList}</ul></div>
         <div class="ind-usage">${item.usage}</div>
         <span class="ind-cta">Voir la description détaillée &#8594;</span>
